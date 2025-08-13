@@ -6,6 +6,7 @@ import '../../core/services/user_storage_service.dart';
 import '../../core/exceptions/api_exception.dart';
 import '../../core/models/task_model.dart';
 import '../../core/router/app_router.dart';
+import '../widgets/tote_id_input_dialog.dart';
 
 /// 스캔 화면 타입 정의
 enum ReqType {
@@ -258,9 +259,9 @@ class _BasicScreenState extends State<BasicScreen> {
         final currentType = widget.getEffectiveScanType(context);
 
         if (currentType == ReqType.scan) {
-          // 토트박스 스캔 API 호출
+          // 토트 ID 입력 다이얼로그 표시
           print('토트박스 스캔 시작');
-          await _handleToteBoxScan();
+          await _showToteIdInputDialog();
         } else if (currentType == ReqType.navigate) {
           await _handleNavigate();
         } else {
@@ -295,11 +296,60 @@ class _BasicScreenState extends State<BasicScreen> {
     }
   }
 
-  /// 토트박스 스캔 처리
-  Future<void> _handleToteBoxScan() async {
-    // 저장된 사용자 정보 가져오기
+  /// 토트 ID 입력 다이얼로그 표시
+  Future<void> _showToteIdInputDialog() async {
+    // 로딩 상태를 먼저 해제 (다이얼로그가 표시되기 전에)
+    setState(() {
+      _isLoading = false;
+    });
 
-    final toteId = 'TOTE-001';
+    await showToteIdInputDialog(
+      context,
+      onConfirm: (String toteId) async {
+        // 다이얼로그에서 입력받은 토트 ID로 스캔 처리
+        await _performToteBoxScan(toteId);
+      },
+    );
+  }
+
+  /// 실제 토트박스 스캔 API 호출 및 처리
+  Future<void> _performToteBoxScan(String toteId) async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await _handleToteBoxScan(toteId);
+    } catch (e) {
+      // 에러 처리
+      if (mounted) {
+        String errorMessage = '토트박스 스캔 중 오류가 발생했습니다.';
+
+        if (e is ApiException) {
+          errorMessage = e.message;
+        } else if (e is NetworkException) {
+          errorMessage = e.message;
+        } else if (e is ServerException) {
+          errorMessage = e.message;
+        }
+
+        setState(() {
+          _errorMessage = errorMessage;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  /// 토트박스 스캔 처리
+  Future<void> _handleToteBoxScan(String toteId) async {
+    print('토트박스 스캔 시작: $toteId');
 
     final result = await WorkerApiService.scanToteBox(
       _workType,
@@ -307,7 +357,8 @@ class _BasicScreenState extends State<BasicScreen> {
       toteId,
     );
 
-    print('토트박스 스캔 성공: ${result}');
+    print('토트박스 스캔 API 응답: $result');
+    
     // 응답 데이터를 모델로 파싱
     final scanResponse = ToteBoxScanResponse.fromJson(result);
 

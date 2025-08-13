@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:auto_route/auto_route.dart';
 import '../../core/constants/app_colors.dart';
@@ -6,6 +7,7 @@ import '../../core/services/worker_api_service.dart';
 import '../../core/models/task_model.dart';
 import '../../core/exceptions/api_exception.dart';
 import '../../core/router/app_router.dart';
+import '../widgets/error_confirmation_dialog.dart';
 
 /// Item Confirmation Screen - 물품 확인 화면
 /// 스캔된 물품의 정보를 확인하고 작업을 진행하는 화면
@@ -20,11 +22,19 @@ class ItemConfirmationScreen extends StatefulWidget {
 class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
   Task? _currentTask;
   bool _isLoading = false;
+  Timer? _errorPollingTimer;
 
   @override
   void initState() {
     super.initState();
     _loadCurrentTask();
+    _startErrorPolling();
+  }
+
+  @override
+  void dispose() {
+    _errorPollingTimer?.cancel();
+    super.dispose();
   }
 
   /// 현재 태스크 로드
@@ -55,6 +65,47 @@ class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
         _isLoading = false;
       });
       print('태스크 로드 오류: $e');
+    }
+  }
+
+  /// 에러 상태 폴링 시작
+  void _startErrorPolling() {
+    _errorPollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      _checkErrorStatus();
+    });
+  }
+
+  /// 에러 상태 확인
+  Future<void> _checkErrorStatus() async {
+    try {
+      // 사용자 정보 가져오기
+      final userInfo = await UserStorageService.getUserInfo();
+      final workType = userInfo['workType'] ?? 'IB';
+      final workerId = userInfo['workerId'] ?? '1234';
+
+      // 에러 상태 확인 API 호출
+      final errorStatus = await WorkerApiService.getErrorStatus(workType, workerId);
+
+      if (errorStatus['hasError'] == true && mounted) {
+        final locationId = errorStatus['location_id'] as String;
+        final errorCode = errorStatus['code'] as String;
+
+        print('에러 상태 감지: $locationId, code: $errorCode');
+
+        // 에러 확인 다이얼로그 표시
+        await showErrorConfirmationDialog(
+          context,
+          locationId: locationId,
+          errorCode: errorCode,
+          onConfirmed: () {
+            // 에러 처리 완료 후 태스크 다시 로드
+            _loadCurrentTask();
+          },
+        );
+      }
+    } catch (e) {
+      // 에러 상태 확인 실패는 로그만 출력 (사용자에게 알리지 않음)
+      print('에러 상태 확인 실패: $e');
     }
   }
 
