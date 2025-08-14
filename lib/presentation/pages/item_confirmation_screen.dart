@@ -280,6 +280,10 @@ class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
     });
 
     try {
+      // 현재 태스크가 없으면 처리 불가
+      if (_currentTask == null) {
+        throw Exception('현재 확인할 태스크가 없습니다.');
+      }
       // 사용자 정보 가져오기
       final userInfo = await UserStorageService.getUserInfo();
       final workType = userInfo['workType'] ?? 'IB';
@@ -288,7 +292,12 @@ class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
       print('작업 완료 보고 시작: $workType/$workerId');
 
       // 작업 완료 API 호출
-      final success = await WorkerApiService.finishWork(workType, workerId);
+      // 서버는 location_id를 필수로 요구하므로 현재 태스크의 위치를 함께 전달
+      final success = await WorkerApiService.finishWork(
+        workType,
+        workerId,
+        _currentTask!.targetLocationId,
+      );
 
       if (success && mounted) {
         print('작업 완료 보고 성공');
