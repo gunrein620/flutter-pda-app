@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:auto_route/auto_route.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/api_config.dart';
 import '../../core/services/user_storage_service.dart';
 import '../../core/services/worker_api_service.dart';
 import '../../core/models/task_model.dart';
@@ -22,18 +25,22 @@ class ItemConfirmationScreen extends StatefulWidget {
 class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
   Task? _currentTask;
   bool _isLoading = false;
-  Timer? _errorPollingTimer;
+  WebSocketChannel? _webSocketChannel;
+  StreamSubscription? _webSocketSubscription;
+  bool _isConnected = false;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 5;
 
   @override
   void initState() {
     super.initState();
     _loadCurrentTask();
-    _startErrorPolling();
+    _connectWebSocket();
   }
 
   @override
   void dispose() {
-    _errorPollingTimer?.cancel();
+    _disconnectWebSocket();
     super.dispose();
   }
 
@@ -68,45 +75,188 @@ class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
     }
   }
 
-  /// 에러 상태 폴링 시작
-  void _startErrorPolling() {
-    _errorPollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      _checkErrorStatus();
-    });
-  }
-
-  /// 에러 상태 확인
-  Future<void> _checkErrorStatus() async {
+  /// WebSocket 연결
+  Future<void> _connectWebSocket() async {
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      print('[WebSocket] 최대 재연결 시도 횟수 초과. 연결 포기.');
+      return;
+    }
+    
     try {
-      // 사용자 정보 가져오기
       final userInfo = await UserStorageService.getUserInfo();
       final workType = userInfo['workType'] ?? 'IB';
       final workerId = userInfo['workerId'] ?? '1234';
-
-      // 에러 상태 확인 API 호출
-      final errorStatus = await WorkerApiService.getErrorStatus(workType, workerId);
-
-      if (errorStatus['hasError'] == true && mounted) {
-        final locationId = errorStatus['location_id'] as String;
-        final errorCode = errorStatus['code'] as String;
-
-        print('에러 상태 감지: $locationId, code: $errorCode');
-
-        // 에러 확인 다이얼로그 표시
-        await showErrorConfirmationDialog(
-          context,
-          locationId: locationId,
-          errorCode: errorCode,
-          onConfirmed: () {
-            // 에러 처리 완료 후 태스크 다시 로드
-            _loadCurrentTask();
-          },
-        );
+      
+      final wsUrl = ApiConfig.baseUrl.replaceFirst('http', 'ws');
+      final uri = Uri.parse('$wsUrl/ws/$workType/$workerId');
+      
+      print('[WebSocket] 연결 시도 (${_reconnectAttempts + 1}/${_maxReconnectAttempts}): $uri');
+      
+      _webSocketChannel = WebSocketChannel.connect(uri);
+      
+      _webSocketSubscription = _webSocketChannel!.stream.listen(
+        (message) {
+          _handleWebSocketMessage(message);
+        },
+        onError: (error) {
+          print('[WebSocket] 오류: $error');
+          if (mounted) {
+            setState(() {
+              _isConnected = false;
+            });
+          }
+          _reconnectWebSocket();
+        },
+        onDone: () {
+          print('[WebSocket] 연결 종료');
+          if (mounted) {
+            setState(() {
+              _isConnected = false;
+            });
+          }
+          _reconnectWebSocket();
+        },
+      );
+      
+    } catch (e) {
+      print('[WebSocket] 연결 실패: $e');
+      if (mounted) {
+        setState(() {
+          _isConnected = false;
+        });
+      }
+      _reconnectWebSocket();
+    }
+  }
+  
+  /// WebSocket 메시지 처리
+  void _handleWebSocketMessage(dynamic message) {
+    try {
+      final data = jsonDecode(message.toString());
+      print('[WebSocket] 메시지 수신: $data');
+      
+      final type = data['type'];
+      
+      if (type == 'connected') {
+        print('[WebSocket] 연결 확인됨');
+        if (mounted) {
+          setState(() {
+            _isConnected = true;
+            _reconnectAttempts = 0; // 연결 성공 시 재연결 시도 카운터 리셋
+          });
+        }
+      } else if (type == 'task_completed') {
+        print('[WebSocket] 작업 완료 알림 수신');
+        _handleTaskCompleted();
+      } else if (type == 'task_error') {
+        final locationId = data['location_id'] as String;
+        final errorCode = data['code'] as String;
+        print('[WebSocket] 에러 알림 수신: $locationId, code: $errorCode');
+        _handleTaskError(locationId, errorCode);
       }
     } catch (e) {
-      // 에러 상태 확인 실패는 로그만 출력 (사용자에게 알리지 않음)
-      print('에러 상태 확인 실패: $e');
+      print('[WebSocket] 메시지 파싱 오류: $e');
     }
+  }
+  
+  /// 작업 완료 처리
+  Future<void> _handleTaskCompleted() async {
+    if (!mounted) return;
+    
+    try {
+      // 현재 태스크 인덱스 증가
+      final currentTaskIndex = await UserStorageService.getCurrentTaskIndex();
+      final tasks = await UserStorageService.getTasks();
+
+      if (currentTaskIndex < tasks.length - 1) {
+        // 다음 태스크가 있는 경우
+        final nextTaskIndex = currentTaskIndex + 1;
+        final nextTask = tasks[nextTaskIndex];
+
+        // 다음 태스크의 목표 위치가 현재와 다른지 확인
+        final currentTargetLocation = await UserStorageService.getTargetLocation();
+
+        if (nextTask.targetLocationId != currentTargetLocation) {
+          // 다른 위치로 이동해야 하는 경우
+          await UserStorageService.saveCurrentProgress(
+            taskIndex: nextTaskIndex,
+            targetLocation: nextTask.targetLocationId,
+          );
+
+          // Basic Screen으로 이동 (새로운 목표 위치 표시)
+          context.router.replace(BasicRoute(reqType: 'navigate'));
+        } else {
+          // 같은 위치에서 다음 태스크 처리
+          await UserStorageService.saveCurrentProgress(
+            taskIndex: nextTaskIndex,
+            targetLocation: nextTask.targetLocationId,
+          );
+
+          // 같은 화면에서 다음 태스크 로드
+          await _loadCurrentTask();
+        }
+      } else {
+        // 모든 태스크 완료
+        print('모든 태스크가 완료되었습니다.');
+        context.router.replace(BasicRoute(reqType: 'scan'));
+      }
+
+      // 성공 메시지 표시
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('물품이 성공적으로 확인되었습니다.'),
+          backgroundColor: AppColors.primary,
+        ),
+      );
+    } catch (e) {
+      print('작업 완료 처리 오류: $e');
+    }
+  }
+  
+  /// 작업 에러 처리
+  Future<void> _handleTaskError(String locationId, String errorCode) async {
+    if (!mounted) return;
+    
+    print('에러 상태 감지: $locationId, code: $errorCode');
+
+    // 에러 확인 다이얼로그 표시
+    await showErrorConfirmationDialog(
+      context,
+      locationId: locationId,
+      errorCode: errorCode,
+      onConfirmed: () {
+        // 에러 처리 완료 후 태스크 다시 로드
+        _loadCurrentTask();
+      },
+    );
+  }
+  
+  /// WebSocket 재연결
+  Future<void> _reconnectWebSocket() async {
+    if (!mounted || _reconnectAttempts >= _maxReconnectAttempts) {
+      return;
+    }
+    
+    _disconnectWebSocket();
+    _reconnectAttempts++;
+    
+    // 지수 백오프: 2^attempts초 대기 (최대 30초)
+    final delaySeconds = (2 * _reconnectAttempts).clamp(1, 30);
+    print('[WebSocket] ${delaySeconds}초 후 재연결 시도...');
+    
+    await Future.delayed(Duration(seconds: delaySeconds));
+    
+    if (mounted) {
+      _connectWebSocket();
+    }
+  }
+  
+  /// WebSocket 연결 해제
+  void _disconnectWebSocket() {
+    _webSocketSubscription?.cancel();
+    _webSocketChannel?.sink.close();
+    _webSocketSubscription = null;
+    _webSocketChannel = null;
   }
 
   @override
@@ -123,6 +273,40 @@ class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
           child: Column(
             children: [
               const SizedBox(height: 20.0),
+
+              // WebSocket 연결 상태 표시
+              if (!_isConnected)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10.0),
+                  padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20.0),
+                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 12.0,
+                        height: 12.0,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.0,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
+                        ),
+                      ),
+                      const SizedBox(width: 8.0),
+                      Text(
+                        '실시간 연결 중...',
+                        style: TextStyle(
+                          fontSize: 12.0,
+                          color: Colors.orange.shade700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
 
               // 제품 이미지 카드
               Center(
@@ -300,50 +484,12 @@ class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
       );
 
       if (success && mounted) {
-        print('작업 완료 보고 성공');
-
-        // 현재 태스크 인덱스 증가
-        final currentTaskIndex = await UserStorageService.getCurrentTaskIndex();
-        final tasks = await UserStorageService.getTasks();
-
-        if (currentTaskIndex < tasks.length - 1) {
-          // 다음 태스크가 있는 경우
-          final nextTaskIndex = currentTaskIndex + 1;
-          final nextTask = tasks[nextTaskIndex];
-
-          // 다음 태스크의 목표 위치가 현재와 다른지 확인
-          final currentTargetLocation =
-              await UserStorageService.getTargetLocation();
-
-          if (nextTask.targetLocationId != currentTargetLocation) {
-            // 다른 위치로 이동해야 하는 경우
-            await UserStorageService.saveCurrentProgress(
-              taskIndex: nextTaskIndex,
-              targetLocation: nextTask.targetLocationId,
-            );
-
-            // Basic Screen으로 이동 (새로운 목표 위치 표시)
-            context.router.replace(BasicRoute(reqType: 'navigate'));
-          } else {
-            // 같은 위치에서 다음 태스크 처리
-            await UserStorageService.saveCurrentProgress(
-              taskIndex: nextTaskIndex,
-              targetLocation: nextTask.targetLocationId,
-            );
-
-            // 같은 화면에서 다음 태스크 로드
-            await _loadCurrentTask();
-          }
-        } else {
-          // 모든 태스크 완료
-          print('모든 태스크가 완료되었습니다.');
-          context.router.replace(BasicRoute(reqType: 'scan'));
-        }
-
-        // 성공 메시지 표시
+        print('작업 완료 보고 성공 - WebSocket 응답 대기 중...');
+        
+        // WebSocket이 응답을 처리하므로 여기서는 성공 메시지만 표시
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('물품이 성공적으로 확인되었습니다.'),
+            content: Text('작업 완료 요청이 전송되었습니다. 하드웨어 응답을 기다리는 중...'),
             backgroundColor: AppColors.primary,
           ),
         );
