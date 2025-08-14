@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:auto_route/auto_route.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/constants/api_config.dart';
 import '../../core/router/app_router.dart';
 import 'basic_screen.dart';
 import '../../core/constants/app_sizes.dart';
@@ -53,12 +54,17 @@ class _LoginPageState extends State<LoginPage> {
       final workType = _selectedWorkType!.value; // IB 또는 OB
       final workerId = _userIdController.text.trim();
 
+      print('🔑 로그인 시도: workType=$workType, workerId=$workerId');
+      print('🌐 API URL: ${ApiConfig.baseUrl}');
+
       await WorkerApiService.registerWorker(workType, workerId);
 
       if (mounted) {
         setState(() {
           _isLoading = false;
         });
+
+        print('✅ 로그인 성공!');
 
         // 로그인 성공 시 사용자 정보 저장
         await UserStorageService.saveUserInfo(workType, workerId);
@@ -67,29 +73,65 @@ class _LoginPageState extends State<LoginPage> {
         context.router.replace(BasicRoute(reqType: 'scan'));
       }
     } on NetworkException catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
+      print('🌐 네트워크 오류: ${e.message}');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-      );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('네트워크 연결 오류\\n${e.message}\\n\\n현재 서버 주소: ${ApiConfig.baseUrl}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     } on ServerException catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
+      print('🛠️ 서버 오류: ${e.message} (상태코드: ${e.statusCode})');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-      );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('서버 오류\\n${e.message}\\n\\n상태 코드: ${e.statusCode}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     } on ApiException catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
+      print('⚠️ API 오류: ${e.message}');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-      );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('로그인 실패\\n${e.message}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ 예상치 못한 오류: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('예상치 못한 오류가 발생했습니다\\n$e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
     }
   }
 

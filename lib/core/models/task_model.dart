@@ -16,13 +16,27 @@ class Task {
 
   /// JSON에서 Task 객체 생성
   factory Task.fromJson(Map<String, dynamic> json) {
-    return Task(
-      productId: json['product_id'] as String,
-      name: json['name'] as String,
-      img: json['img'] as String? ?? '', // null일 경우 빈 문자열
-      quantity: json['quantity'] as int,
-      targetLocationId: json['target_location_id'] as String,
-    );
+    try {
+      return Task(
+        productId: json['product_id'].toString(), // int를 String으로 변환
+        name: json['product_name'] as String? ?? json['name'] as String? ?? '', // 서버의 product_name 또는 name 필드 사용
+        img: json['img'] as String? ?? '', // null일 경우 빈 문자열
+        quantity: json['quantity'] as int,
+        targetLocationId: json['location_id'] as String? ?? json['target_location_id'] as String? ?? '', // 서버의 location_id 필드 사용
+      );
+    } catch (e) {
+      print('[Task.fromJson] ⚠️ 파싱 오류 발생: $e');
+      print('[Task.fromJson] 📋 JSON 데이터: $json');
+      print('[Task.fromJson] 🔍 개별 필드 분석:');
+      print('  - product_id: ${json['product_id']} (타입: ${json['product_id']?.runtimeType})');
+      print('  - product_name: ${json['product_name']} (타입: ${json['product_name']?.runtimeType})');
+      print('  - name: ${json['name']} (타입: ${json['name']?.runtimeType})');
+      print('  - quantity: ${json['quantity']} (타입: ${json['quantity']?.runtimeType})');
+      print('  - location_id: ${json['location_id']} (타입: ${json['location_id']?.runtimeType})');
+      print('  - target_location_id: ${json['target_location_id']} (타입: ${json['target_location_id']?.runtimeType})');
+      print('  - img: ${json['img']} (타입: ${json['img']?.runtimeType})');
+      rethrow;
+    }
   }
 
   /// Task 객체를 JSON으로 변환
@@ -45,12 +59,43 @@ class ToteBoxScanResponse {
 
   /// JSON에서 ToteBoxScanResponse 객체 생성
   factory ToteBoxScanResponse.fromJson(Map<String, dynamic> json) {
-    final tasksList = json['tasks'] as List<dynamic>;
-    final tasks = tasksList
-        .map((taskJson) => Task.fromJson(taskJson as Map<String, dynamic>))
-        .toList();
+    try {
+      print('[ToteBoxScanResponse] 📥 파싱 시작: $json');
+      
+      List<Task> tasks = [];
+      
+      // Case 1: 배열 형태 응답 - {"tasks": [...]}
+      if (json.containsKey('tasks') && json['tasks'] is List) {
+        print('[ToteBoxScanResponse] 🔄 배열 형태 응답 처리');
+        final tasksList = json['tasks'] as List<dynamic>;
+        print('[ToteBoxScanResponse] 📊 태스크 개수: ${tasksList.length}');
+        
+        tasks = tasksList
+            .map((taskJson) {
+              print('[ToteBoxScanResponse] 🔍 개별 태스크 파싱: $taskJson');
+              return Task.fromJson(taskJson as Map<String, dynamic>);
+            })
+            .toList();
+      }
+      // Case 2: 단일 객체 응답 - 직접 Task 필드들이 포함된 경우
+      else if (json.containsKey('product_id') || json.containsKey('product_name')) {
+        print('[ToteBoxScanResponse] 🎯 단일 객체 응답 처리');
+        final task = Task.fromJson(json);
+        tasks = [task];
+      }
+      // Case 3: 알 수 없는 구조
+      else {
+        print('[ToteBoxScanResponse] ❓ 알 수 없는 응답 구조');
+        throw FormatException('알 수 없는 서버 응답 구조: $json');
+      }
 
-    return ToteBoxScanResponse(tasks: tasks);
+      print('[ToteBoxScanResponse] ✅ 파싱 완료: ${tasks.length}개 태스크');
+      return ToteBoxScanResponse(tasks: tasks);
+    } catch (e) {
+      print('[ToteBoxScanResponse] ⚠️ 파싱 오류: $e');
+      print('[ToteBoxScanResponse] 📋 JSON 데이터: $json');
+      rethrow;
+    }
   }
 
   /// ToteBoxScanResponse 객체를 JSON으로 변환
