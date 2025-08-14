@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../core/constants/app_colors.dart';
@@ -259,6 +261,96 @@ class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
     _webSocketChannel = null;
   }
 
+  /// 제품 이미지 위젯 빌드
+  Widget _buildProductImage() {
+    if (_currentTask == null) {
+      print('[이미지] 현재 태스크가 null입니다');
+      return const Icon(
+        Icons.laptop_mac_outlined,
+        color: AppColors.textSecondary,
+        size: 64.0,
+      );
+    }
+
+    print('[이미지] 제품명: "${_currentTask!.name}"');
+    print('[이미지] hasLocalImage: ${_currentTask!.hasLocalImage}');
+    print('[이미지] localImagePath: "${_currentTask!.localImagePath}"');
+    print('[이미지] 서버 이미지 URL: "${_currentTask!.img}"');
+    print('[이미지] 플랫폼: ${kIsWeb ? "웹" : "모바일"}');
+
+    // 로컬 이미지 우선 시도
+    if (_currentTask!.hasLocalImage) {
+      final assetPath = _currentTask!.localImagePath;
+      print('[이미지] 🎯 로컬 이미지 로드 시도: "$assetPath"');
+      
+      // 웹에서 asset 파일 존재 여부 확인
+      return FutureBuilder<bool>(
+        future: _checkAssetExists(assetPath),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const CircularProgressIndicator();
+          }
+          
+          if (snapshot.hasData && snapshot.data == true) {
+            print('[이미지] ✅ Asset 파일 존재 확인됨: $assetPath');
+            return Image.asset(
+              assetPath,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                print('[이미지] ❌ Asset 이미지 로드 실패: $error');
+                print('[이미지] 스택트레이스: $stackTrace');
+                return _buildFallbackToNetwork();
+              },
+            );
+          } else {
+            print('[이미지] ❌ Asset 파일이 존재하지 않음: $assetPath');
+            return _buildFallbackToNetwork();
+          }
+        },
+      );
+    }
+    
+    // 서버 이미지 시도
+    return _buildFallbackToNetwork();
+  }
+
+  /// Asset 파일 존재 여부 확인
+  Future<bool> _checkAssetExists(String assetPath) async {
+    try {
+      await rootBundle.load(assetPath);
+      return true;
+    } catch (e) {
+      print('[이미지] Asset 로드 실패: $e');
+      return false;
+    }
+  }
+
+  /// 네트워크 이미지로 폴백하거나 기본 아이콘 표시
+  Widget _buildFallbackToNetwork() {
+    if (_currentTask?.img.isNotEmpty == true) {
+      print('[이미지] 🌐 네트워크 이미지 로드 시도: "${_currentTask!.img}"');
+      return Image.network(
+        _currentTask!.img,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          print('[이미지] ❌ 네트워크 이미지 로드 실패: $error');
+          return const Icon(
+            Icons.laptop_mac_outlined,
+            color: AppColors.textSecondary,
+            size: 64.0,
+          );
+        },
+      );
+    }
+    
+    print('[이미지] 🔧 기본 아이콘 표시 (이미지 없음)');
+    return const Icon(
+      Icons.laptop_mac_outlined,
+      color: AppColors.textSecondary,
+      size: 64.0,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
@@ -334,13 +426,7 @@ class _ItemConfirmationScreenState extends State<ItemConfirmationScreen> {
                       width: double.infinity,
                       height: double.infinity,
                       color: const Color(0xFFF2F2F2),
-                      child: _currentTask?.img.isNotEmpty == true
-                          ? Image.network(_currentTask!.img, fit: BoxFit.cover)
-                          : const Icon(
-                              Icons.laptop_mac_outlined,
-                              color: AppColors.textSecondary,
-                              size: 64.0,
-                            ),
+                      child: _buildProductImage(),
                     ),
                   ),
                 ),

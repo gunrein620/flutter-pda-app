@@ -169,16 +169,41 @@ class _MissionBriefingScreenState extends State<MissionBriefingScreen> {
               color: const Color(0xFFF2F2F2),
               borderRadius: BorderRadius.circular(8.0),
             ),
-            child: task.img.isNotEmpty
+            child: task.hasLocalImage
                 ? ClipRRect(
                     borderRadius: BorderRadius.circular(8.0),
-                    child: Image.network(task.img, fit: BoxFit.cover),
+                    child: Image.asset(
+                      task.localImagePath,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          Icons.inventory_2_outlined,
+                          color: AppColors.textSecondary,
+                          size: 32.0,
+                        );
+                      },
+                    ),
                   )
-                : const Icon(
-                    Icons.inventory_2_outlined,
-                    color: AppColors.textSecondary,
-                    size: 32.0,
-                  ),
+                : task.img.isNotEmpty
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(8.0),
+                        child: Image.network(
+                          task.img,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Icon(
+                              Icons.inventory_2_outlined,
+                              color: AppColors.textSecondary,
+                              size: 32.0,
+                            );
+                          },
+                        ),
+                      )
+                    : const Icon(
+                        Icons.inventory_2_outlined,
+                        color: AppColors.textSecondary,
+                        size: 32.0,
+                      ),
           ),
 
           const SizedBox(width: 16.0),

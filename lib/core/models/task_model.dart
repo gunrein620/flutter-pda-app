@@ -1,3 +1,5 @@
+import '../utils/image_mapper.dart';
+
 /// 작업 태스크 모델
 class Task {
   final String productId;
@@ -13,6 +15,17 @@ class Task {
     required this.quantity,
     required this.targetLocationId,
   });
+
+  /// 로컬 이미지 경로 반환 (assets 이미지 우선)
+  String get localImagePath {
+    final localPath = ImageMapper.getImagePath(name);
+    return localPath ?? img; // 로컬 이미지가 없으면 서버 이미지 URL 사용
+  }
+
+  /// 이미지가 로컬 assets인지 확인
+  bool get hasLocalImage {
+    return ImageMapper.getImagePath(name) != null;
+  }
 
   /// JSON에서 Task 객체 생성
   factory Task.fromJson(Map<String, dynamic> json) {
